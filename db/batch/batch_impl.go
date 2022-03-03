@@ -257,17 +257,6 @@ func (cb *cachedBatch) touchKey(h hash.Hash160) {
 	}
 }
 
-func (cb *cachedBatch) touchKey(h hash.Hash160) {
-	tags, ok := cb.keyTags[h]
-	if !ok {
-		cb.keyTags[h] = []int{cb.tag}
-		return
-	}
-	if tags[len(tags)-1] != cb.tag {
-		cb.keyTags[h] = append(tags, cb.tag)
-	}
-}
-
 // Put inserts a <key, value> record
 func (cb *cachedBatch) Put(namespace string, key, value []byte, errorFormat string, errorArgs ...interface{}) {
 	cb.lock.Lock()
