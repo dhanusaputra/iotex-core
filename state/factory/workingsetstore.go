@@ -32,7 +32,8 @@ type (
 		Digest() hash.Hash256
 		Finalize(uint64) error
 		Snapshot() int
-		Revert(int) error
+		RevertSnapshot(int) error
+		ResetSnapshots()
 		ReadView(string) (interface{}, error)
 		WriteView(string, interface{}) error
 	}
@@ -132,8 +133,12 @@ func (store *stateDBWorkingSetStore) Snapshot() int {
 	return store.flusher.KVStoreWithBuffer().Snapshot()
 }
 
-func (store *stateDBWorkingSetStore) Revert(snapshot int) error {
-	return store.flusher.KVStoreWithBuffer().Revert(snapshot)
+func (store *stateDBWorkingSetStore) RevertSnapshot(snapshot int) error {
+	return store.flusher.KVStoreWithBuffer().RevertSnapshot(snapshot)
+}
+
+func (store *stateDBWorkingSetStore) ResetSnapshots() {
+	store.flusher.KVStoreWithBuffer().ResetSnapshots()
 }
 
 func (store *factoryWorkingSetStore) Start(ctx context.Context) error {
@@ -241,8 +246,8 @@ func (store *factoryWorkingSetStore) Snapshot() int {
 	return s
 }
 
-func (store *factoryWorkingSetStore) Revert(snapshot int) error {
-	if err := store.flusher.KVStoreWithBuffer().Revert(snapshot); err != nil {
+func (store *factoryWorkingSetStore) RevertSnapshot(snapshot int) error {
+	if err := store.flusher.KVStoreWithBuffer().RevertSnapshot(snapshot); err != nil {
 		return err
 	}
 	root, ok := store.trieRoots[snapshot]
@@ -251,4 +256,9 @@ func (store *factoryWorkingSetStore) Revert(snapshot int) error {
 		return errors.Wrapf(trie.ErrInvalidTrie, "failed to get trie root for snapshot = %d", snapshot)
 	}
 	return store.tlt.SetRootHash(root[:])
+}
+
+func (store *factoryWorkingSetStore) ResetSnapshots() {
+	store.flusher.KVStoreWithBuffer().ResetSnapshots()
+	store.trieRoots = make(map[int][]byte)
 }

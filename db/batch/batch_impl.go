@@ -188,13 +188,12 @@ func (b *baseKVStoreBatch) truncate(size int) {
 
 // NewCachedBatch returns a new cached batch buffer
 func NewCachedBatch() CachedBatch {
-	return &cachedBatch{
+	cb := &cachedBatch{
 		kvStoreBatch: newBaseKVStoreBatch(),
-		batchShots:   make([]int, 0),
-		caches:       []KVStoreCache{NewKVCache()},
-		keyTags:      map[hash.Hash160][]int{},
-		tagKeys:      [][]hash.Hash160{{}},
 	}
+	cb.resetSnapshots()
+
+	return cb
 }
 
 func (cb *cachedBatch) Translate(wit WriteInfoTranslate) KVStoreBatch {
@@ -235,6 +234,10 @@ func (cb *cachedBatch) currentCache() KVStoreCache {
 
 func (cb *cachedBatch) clear() {
 	cb.kvStoreBatch.Clear()
+	cb.resetSnapshots()
+}
+
+func (cb *cachedBatch) resetSnapshots() {
 	// clear all saved snapshots
 	cb.tag = 0
 	cb.batchShots = nil
@@ -315,8 +318,7 @@ func (cb *cachedBatch) Snapshot() int {
 	return cb.tag
 }
 
-// Revert sets the cached batch to the state at the given snapshot
-func (cb *cachedBatch) Revert(snapshot int) error {
+func (cb *cachedBatch) RevertSnapshot(snapshot int) error {
 	cb.lock.Lock()
 	defer cb.lock.Unlock()
 	// throw error if the snapshot number does not exist
@@ -340,6 +342,10 @@ func (cb *cachedBatch) Revert(snapshot int) error {
 	cb.tagKeys = cb.tagKeys[:cb.tag+1]
 	cb.tagKeys[cb.tag] = []hash.Hash160{}
 	return nil
+}
+
+func (cb *cachedBatch) ResetSnapshots() {
+	cb.resetSnapshots()
 }
 
 func (cb *cachedBatch) CheckFillPercent(ns string) (float64, bool) {

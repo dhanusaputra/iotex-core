@@ -160,25 +160,28 @@ func (ws *workingSet) runAction(
 	if !ok {
 		return nil, nil
 	}
+	elpHash, err := elp.Hash()
+	if err != nil {
+		return nil, errors.Wrapf(err, "Failed to get hash")
+	}
+	var receipt *action.Receipt
 	for _, actionHandler := range reg.All() {
-		receipt, err := actionHandler.Handle(ctx, elp.Action(), ws)
-		elpHash, err1 := elp.Hash()
-		if err1 != nil {
-			return nil, errors.Wrapf(err1, "Failed to get hash")
-		}
+		receipt, err = actionHandler.Handle(ctx, elp.Action(), ws)
 		if err != nil {
-			return nil, errors.Wrapf(
+			err = errors.Wrapf(
 				err,
 				"error when action %x mutates states",
 				elpHash,
 			)
 		}
-		if receipt != nil {
-			return receipt, nil
+		if receipt != nil || err != nil {
+			break
 		}
 	}
-	// TODO (zhi): return error
-	return nil, nil
+	ws.ResetSnapshots()
+
+	// TODO (zhi): return error if both receipt and err are nil
+	return receipt, err
 }
 
 func validateChainID(ctx context.Context, chainID uint32) error {
@@ -207,7 +210,11 @@ func (ws *workingSet) Snapshot() int {
 }
 
 func (ws *workingSet) Revert(snapshot int) error {
-	return ws.store.Revert(snapshot)
+	return ws.store.RevertSnapshot(snapshot)
+}
+
+func (ws *workingSet) ResetSnapshots() {
+	ws.store.ResetSnapshots()
 }
 
 // Commit persists all changes in RunActions() into the DB
