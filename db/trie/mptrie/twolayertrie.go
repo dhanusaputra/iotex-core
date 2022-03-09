@@ -45,12 +45,12 @@ func (tlt *twoLayerTrie) layerTwoTrie(key []byte, layerTwoTrieKeyLen int) (*laye
 		return lt, nil
 	}
 	opts := []Option{KVStoreOption(tlt.kvStore), KeyLengthOption(layerTwoTrieKeyLen), AsyncOption()}
-	value, err := tlt.layerOne.Get(key)
+	rh, err := tlt.layerOne.Get(key)
 	switch errors.Cause(err) {
 	case trie.ErrNotExist:
 		// start an empty trie
 	case nil:
-		opts = append(opts, RootHashOption(value))
+		opts = append(opts, RootHashOption(rh))
 	default:
 		return nil, err
 	}
@@ -201,4 +201,33 @@ func (tlt *twoLayerTrie) Delete(layerOneKey []byte, layerTwoKey []byte) error {
 	lt.dirty = true
 
 	return nil
+}
+
+func (tlt *twoLayerTrie) Clone(kvStore trie.KVStore) (trie.TwoLayerTrie, error) {
+	layerTwoMap := make(map[string]*layerTwo, len(tlt.layerTwoMap))
+	for key, lt := range tlt.layerTwoMap {
+		if lt.dirty {
+			return nil, errors.New("cannot a dirty trie")
+		}
+		tr, err := lt.tr.Clone(kvStore)
+		if err != nil {
+			return nil, err
+		}
+		oh := make([]byte, len(lt.originHash))
+		copy(oh, lt.originHash)
+		layerTwoMap[key] = &layerTwo{
+			tr:         tr,
+			originHash: oh,
+		}
+	}
+	lo, err := tlt.layerOne.Clone(kvStore)
+	if err != nil {
+		return nil, err
+	}
+	return &twoLayerTrie{
+		layerOne:    lo,
+		layerTwoMap: layerTwoMap,
+		kvStore:     kvStore,
+		rootKey:     tlt.rootKey,
+	}, nil
 }

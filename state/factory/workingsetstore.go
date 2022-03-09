@@ -16,7 +16,9 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/iotexproject/iotex-core/action/protocol"
+	"github.com/iotexproject/iotex-core/blockchain/genesis"
 	"github.com/iotexproject/iotex-core/db"
+	"github.com/iotexproject/iotex-core/db/batch"
 	"github.com/iotexproject/iotex-core/db/trie"
 	"github.com/iotexproject/iotex-core/db/trie/mptrie"
 	"github.com/iotexproject/iotex-core/pkg/log"
@@ -43,6 +45,7 @@ type (
 	}
 	factoryWorkingSetStore struct {
 		view      protocol.View
+		sf        *factory
 		flusher   db.KVStoreFlusher
 		tlt       trie.TwoLayerTrie
 		trieRoots map[int][]byte
@@ -56,16 +59,48 @@ func newStateDBWorkingSetStore(view protocol.View, flusher db.KVStoreFlusher) wo
 	}
 }
 
-func newFactoryWorkingSetStore(view protocol.View, flusher db.KVStoreFlusher) (workingSetStore, error) {
-	tlt, err := newTwoLayerTrie(ArchiveTrieNamespace, flusher.KVStoreWithBuffer(), ArchiveTrieRootKey, true)
+func newFactoryWorkingSetStore(ctx context.Context, sf *factory, height uint64) (workingSetStore, error) {
+	g := genesis.MustExtractGenesisContext(ctx)
+	flusher, err := db.NewKVStoreFlusher(
+		sf.dao,
+		batch.NewCachedBatch(),
+		sf.flusherOptions(!g.IsEaster(height))...,
+	)
 	if err != nil {
 		return nil, err
 	}
+	for _, p := range sf.ps.Get(height) {
+		if p.Type == _Delete {
+			flusher.KVStoreWithBuffer().MustDelete(p.Namespace, p.Key)
+		} else {
+			flusher.KVStoreWithBuffer().MustPut(p.Namespace, p.Key, p.Value)
+		}
+	}
+	kvStore, err := trie.NewKVStore(ArchiveTrieNamespace, flusher.KVStoreWithBuffer())
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create db for trie")
+	}
+	fmt.Println("==================")
+	fmt.Println(sf)
+	fmt.Println("------------------")
+	fmt.Println(sf.twoLayerTrie)
+	fmt.Println("------------------")
+	fmt.Println(kvStore)
+	fmt.Println("==================")
+	clone, err := sf.twoLayerTrie.Clone(kvStore)
+	if err != nil {
+		return nil, err
+	}
+	// tlt, err := newTwoLayerTrie(ArchiveTrieNamespace, flusher.KVStoreWithBuffer(), ArchiveTrieRootKey, true)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	return &factoryWorkingSetStore{
 		flusher:   flusher,
-		view:      view,
-		tlt:       tlt,
+		view:      sf.protocolView,
+		tlt:       clone,
+		sf:        sf,
 		trieRoots: make(map[int][]byte),
 	}, nil
 }
@@ -233,7 +268,16 @@ func (store *factoryWorkingSetStore) Finalize(h uint64) error {
 
 func (store *factoryWorkingSetStore) Commit() error {
 	dbBatchSizelMtc.WithLabelValues().Set(float64(store.flusher.KVStoreWithBuffer().Size()))
-	return store.flusher.Flush()
+	if err := store.flusher.Flush(); err != nil {
+		return err
+	}
+	dbForTrie, err := trie.NewKVStore(ArchiveTrieNamespace, store.sf.dao)
+	if err != nil {
+		return errors.Wrap(err, "failed to create db for trie")
+	}
+	store.sf.twoLayerTrie, err = store.tlt.Clone(dbForTrie)
+
+	return err
 }
 
 func (store *factoryWorkingSetStore) Snapshot() int {

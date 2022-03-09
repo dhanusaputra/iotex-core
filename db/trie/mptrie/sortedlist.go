@@ -61,3 +61,10 @@ func (sl *SortedList) Delete(key uint8) {
 		sl.li = sl.li[:len(sl.li)-1]
 	}
 }
+
+// Clone clones a sorted list
+func (sl *SortedList) Clone() *SortedList {
+	li := make([]uint8, len(sl.li))
+	copy(li, sl.li)
+	return &SortedList{li: li}
+}

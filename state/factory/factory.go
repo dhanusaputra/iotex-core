@@ -266,23 +266,7 @@ func (sf *factory) Height() (uint64, error) {
 }
 
 func (sf *factory) newWorkingSet(ctx context.Context, height uint64) (*workingSet, error) {
-	g := genesis.MustExtractGenesisContext(ctx)
-	flusher, err := db.NewKVStoreFlusher(
-		sf.dao,
-		batch.NewCachedBatch(),
-		sf.flusherOptions(!g.IsEaster(height))...,
-	)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range sf.ps.Get(height) {
-		if p.Type == _Delete {
-			flusher.KVStoreWithBuffer().MustDelete(p.Namespace, p.Key)
-		} else {
-			flusher.KVStoreWithBuffer().MustPut(p.Namespace, p.Key, p.Value)
-		}
-	}
-	store, err := newFactoryWorkingSetStore(sf.protocolView, flusher)
+	store, err := newFactoryWorkingSetStore(ctx, sf, height)
 	if err != nil {
 		return nil, err
 	}
@@ -475,13 +459,6 @@ func (sf *factory) PutBlock(ctx context.Context, blk *block.Block) error {
 	}
 
 	if err := ws.Commit(ctx); err != nil {
-		return err
-	}
-	rh, err := sf.dao.Get(ArchiveTrieNamespace, []byte(ArchiveTrieRootKey))
-	if err != nil {
-		return err
-	}
-	if err := sf.twoLayerTrie.SetRootHash(rh); err != nil {
 		return err
 	}
 	sf.currentChainHeight = h
