@@ -44,11 +44,12 @@ type (
 		flusher db.KVStoreFlusher
 	}
 	factoryWorkingSetStore struct {
-		view      protocol.View
-		sf        *factory
-		flusher   db.KVStoreFlusher
-		tlt       trie.TwoLayerTrie
-		trieRoots map[int][]byte
+		view           protocol.View
+		sf             *factory
+		flusher        db.KVStoreFlusher
+		kvStoreForTrie trie.KVStore
+		tlt            trie.TwoLayerTrie
+		trieRoots      map[int]trie.TwoLayerTrie
 	}
 )
 
@@ -80,13 +81,6 @@ func newFactoryWorkingSetStore(ctx context.Context, sf *factory, height uint64) 
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create db for trie")
 	}
-	fmt.Println("==================")
-	fmt.Println(sf)
-	fmt.Println("------------------")
-	fmt.Println(sf.twoLayerTrie)
-	fmt.Println("------------------")
-	fmt.Println(kvStore)
-	fmt.Println("==================")
 	clone, err := sf.twoLayerTrie.Clone(kvStore)
 	if err != nil {
 		return nil, err
@@ -97,11 +91,12 @@ func newFactoryWorkingSetStore(ctx context.Context, sf *factory, height uint64) 
 	// }
 
 	return &factoryWorkingSetStore{
-		flusher:   flusher,
-		view:      sf.protocolView,
-		tlt:       clone,
-		sf:        sf,
-		trieRoots: make(map[int][]byte),
+		flusher:        flusher,
+		view:           sf.protocolView,
+		tlt:            clone,
+		sf:             sf,
+		kvStoreForTrie: kvStore,
+		trieRoots:      make(map[int]trie.TwoLayerTrie),
 	}, nil
 }
 
@@ -267,6 +262,9 @@ func (store *factoryWorkingSetStore) Finalize(h uint64) error {
 }
 
 func (store *factoryWorkingSetStore) Commit() error {
+	if _, err := store.tlt.RootHash(); err != nil {
+		return err
+	}
 	dbBatchSizelMtc.WithLabelValues().Set(float64(store.flusher.KVStoreWithBuffer().Size()))
 	if err := store.flusher.Flush(); err != nil {
 		return err
@@ -281,12 +279,12 @@ func (store *factoryWorkingSetStore) Commit() error {
 }
 
 func (store *factoryWorkingSetStore) Snapshot() int {
-	rh, err := store.tlt.RootHash()
+	clone, err := store.tlt.Clone(store.kvStoreForTrie)
 	if err != nil {
-		log.L().Panic("failed to do snapshot", zap.Error(err))
+		log.L().Panic("failed to clone two layer trie", zap.Error(err))
 	}
 	s := store.flusher.KVStoreWithBuffer().Snapshot()
-	store.trieRoots[s] = rh
+	store.trieRoots[s] = clone
 	return s
 }
 
@@ -294,15 +292,16 @@ func (store *factoryWorkingSetStore) RevertSnapshot(snapshot int) error {
 	if err := store.flusher.KVStoreWithBuffer().RevertSnapshot(snapshot); err != nil {
 		return err
 	}
-	root, ok := store.trieRoots[snapshot]
+	tlt, ok := store.trieRoots[snapshot]
 	if !ok {
 		// this should not happen, b/c we save the trie root on a successful return of Snapshot(), but check anyway
 		return errors.Wrapf(trie.ErrInvalidTrie, "failed to get trie root for snapshot = %d", snapshot)
 	}
-	return store.tlt.SetRootHash(root[:])
+	store.tlt = tlt
+	return nil
 }
 
 func (store *factoryWorkingSetStore) ResetSnapshots() {
 	store.flusher.KVStoreWithBuffer().ResetSnapshots()
-	store.trieRoots = make(map[int][]byte)
+	store.trieRoots = make(map[int]trie.TwoLayerTrie)
 }

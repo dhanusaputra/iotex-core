@@ -56,16 +56,18 @@ func (cn *cacheNode) delete(c client) error {
 	return nil
 }
 
-func (cn *cacheNode) store(cli client) (node, error) {
+func (cn *cacheNode) store(cli client) error {
+	if !cn.dirty {
+		return nil
+	}
 	h, err := cn.hash(cli, true)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if cn.dirty {
-		if err := cli.putNode(h, cn.ser); err != nil {
-			return nil, err
-		}
-		cn.dirty = false
+	if err := cli.putNode(h, cn.ser); err != nil {
+		return err
 	}
-	return newHashNode(cli, h), nil
+	cn.dirty = false
+
+	return nil
 }

@@ -38,7 +38,7 @@ func newBranchNode(
 	bnode.cacheNode.serializable = bnode
 	if len(bnode.children) != 0 {
 		if !cli.asyncMode() {
-			if _, err := bnode.store(cli); err != nil {
+			if err := bnode.store(cli); err != nil {
 				return nil, err
 			}
 		}
@@ -58,8 +58,7 @@ func newRootBranchNode(cli client, children map[byte]node, dirty bool) (*branchN
 	bnode.cacheNode.serializable = bnode
 	if len(bnode.children) != 0 {
 		if !cli.asyncMode() {
-			_, err := bnode.store(cli)
-			if err != nil {
+			if err := bnode.store(cli); err != nil {
 				return nil, err
 			}
 		}
@@ -67,10 +66,12 @@ func newRootBranchNode(cli client, children map[byte]node, dirty bool) (*branchN
 	return bnode, nil
 }
 
-func newBranchNodeFromProtoPb(cli client, pb *triepb.BranchPb) *branchNode {
+func newBranchNodeFromProtoPb(cli client, hashVal []byte, pb *triepb.BranchPb) *branchNode {
 	bnode := &branchNode{
-		cacheNode: cacheNode{},
-		children:  make(map[byte]node, len(pb.Branches)),
+		cacheNode: cacheNode{
+			hashVal: hashVal,
+		},
+		children: make(map[byte]node, len(pb.Branches)),
 	}
 	for _, n := range pb.Branches {
 		bnode.children[byte(n.Index)] = newHashNode(cli, n.Path)
@@ -85,7 +86,6 @@ func (b *branchNode) MarkAsRoot() {
 }
 
 func (b *branchNode) Children() []node {
-	trieMtc.WithLabelValues("branchNode", "children").Inc()
 	ret := make([]node, 0, len(b.children))
 	for _, idx := range b.indices.List() {
 		ret = append(ret, b.children[idx])
@@ -94,7 +94,6 @@ func (b *branchNode) Children() []node {
 }
 
 func (b *branchNode) Delete(cli client, key keyType, offset uint8) (node, error) {
-	trieMtc.WithLabelValues("branchNode", "delete").Inc()
 	offsetKey := key[offset]
 	child, err := b.child(offsetKey)
 	if err != nil {
@@ -149,7 +148,6 @@ func (b *branchNode) Delete(cli client, key keyType, offset uint8) (node, error)
 }
 
 func (b *branchNode) Upsert(cli client, key keyType, offset uint8, value []byte) (node, error) {
-	trieMtc.WithLabelValues("branchNode", "upsert").Inc()
 	var newChild node
 	offsetKey := key[offset]
 	child, err := b.child(offsetKey)
@@ -167,7 +165,6 @@ func (b *branchNode) Upsert(cli client, key keyType, offset uint8, value []byte)
 }
 
 func (b *branchNode) Search(cli client, key keyType, offset uint8) (node, error) {
-	trieMtc.WithLabelValues("branchNode", "search").Inc()
 	child, err := b.child(key[offset])
 	if err != nil {
 		return nil, err
@@ -176,15 +173,12 @@ func (b *branchNode) Search(cli client, key keyType, offset uint8) (node, error)
 }
 
 func (b *branchNode) proto(cli client, flush bool) (proto.Message, error) {
-	trieMtc.WithLabelValues("branchNode", "serialize").Inc()
 	nodes := []*triepb.BranchNodePb{}
 	for _, idx := range b.indices.List() {
 		c := b.children[idx]
 		if flush {
 			if sn, ok := c.(serializable); ok {
-				var err error
-				c, err = sn.store(cli)
-				if err != nil {
+				if err := sn.store(cli); err != nil {
 					return nil, err
 				}
 			}
@@ -219,8 +213,8 @@ func (b *branchNode) Flush(cli client) error {
 			return err
 		}
 	}
-	_, err := b.store(cli)
-	return err
+
+	return b.store(cli)
 }
 
 func (b *branchNode) updateChild(cli client, key byte, child node, hashnode bool) (node, error) {
@@ -255,9 +249,6 @@ func (b *branchNode) updateChild(cli client, key byte, child node, hashnode bool
 }
 
 func (bn *branchNode) Clone() (branch, error) {
-	if bn.dirty {
-		return nil, errors.New("dirty branch node cannot be cloned")
-	}
 	children := make(map[byte]node, len(bn.children))
 	for key, child := range bn.children {
 		children[key] = child
@@ -268,7 +259,7 @@ func (bn *branchNode) Clone() (branch, error) {
 	copy(ser, bn.ser)
 	return &branchNode{
 		cacheNode: cacheNode{
-			dirty:   false,
+			dirty:   bn.dirty,
 			hashVal: hashVal,
 			ser:     ser,
 		},

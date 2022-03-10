@@ -99,30 +99,14 @@ func (tlt *twoLayerTrie) Stop(ctx context.Context) error {
 	if err := tlt.flush(ctx); err != nil {
 		return err
 	}
-
-	return tlt.layerOne.Stop(ctx)
-}
-
-func (tlt *twoLayerTrie) stop(ctx context.Context, hkey string, lt *layerTwo) (err error) {
-	key, err := hex.DecodeString(hkey)
-	if err != nil {
-		return err
-	}
-	if lt.dirty {
-		rh, err := lt.tr.RootHash()
-		if err != nil {
+	keys := tlt.layerTwoKeys()
+	for _, hkey := range keys {
+		if err := tlt.layerTwoMap[hkey].tr.Stop(ctx); err != nil {
 			return err
 		}
-		if !bytes.Equal(rh, lt.originHash) {
-			if lt.tr.IsEmpty() {
-				return tlt.layerOne.Delete(key)
-			}
-
-			return tlt.layerOne.Upsert(key, rh)
-		}
 	}
 
-	return lt.tr.Stop(ctx)
+	return tlt.layerOne.Stop(ctx)
 }
 
 func (tlt *twoLayerTrie) layerTwoKeys() []string {
@@ -138,11 +122,25 @@ func (tlt *twoLayerTrie) layerTwoKeys() []string {
 func (tlt *twoLayerTrie) flush(ctx context.Context) error {
 	keys := tlt.layerTwoKeys()
 	for _, hkey := range keys {
-		if err := tlt.stop(ctx, hkey, tlt.layerTwoMap[hkey]); err != nil {
+		lt := tlt.layerTwoMap[hkey]
+		key, err := hex.DecodeString(hkey)
+		if err != nil {
 			return err
 		}
+		if !lt.dirty {
+			continue
+		}
+		rh, err := lt.tr.RootHash()
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(rh, lt.originHash) {
+			if err := tlt.layerOne.Upsert(key, rh); err != nil {
+				return err
+			}
+		}
+		lt.dirty = false
 	}
-	tlt.layerTwoMap = make(map[string]*layerTwo)
 	_, err := tlt.layerOne.RootHash()
 	return err
 }
@@ -206,9 +204,6 @@ func (tlt *twoLayerTrie) Delete(layerOneKey []byte, layerTwoKey []byte) error {
 func (tlt *twoLayerTrie) Clone(kvStore trie.KVStore) (trie.TwoLayerTrie, error) {
 	layerTwoMap := make(map[string]*layerTwo, len(tlt.layerTwoMap))
 	for key, lt := range tlt.layerTwoMap {
-		if lt.dirty {
-			return nil, errors.New("cannot a dirty trie")
-		}
 		tr, err := lt.tr.Clone(kvStore)
 		if err != nil {
 			return nil, err
@@ -217,6 +212,7 @@ func (tlt *twoLayerTrie) Clone(kvStore trie.KVStore) (trie.TwoLayerTrie, error) 
 		copy(oh, lt.originHash)
 		layerTwoMap[key] = &layerTwo{
 			tr:         tr,
+			dirty:      lt.dirty,
 			originHash: oh,
 		}
 	}

@@ -35,15 +35,18 @@ func newExtensionNode(
 	e.cacheNode.serializable = e
 
 	if !cli.asyncMode() {
-		return e.store(cli)
+		if err := e.store(cli); err != nil {
+			return nil, err
+		}
 	}
 	return e, nil
 }
 
-func newExtensionNodeFromProtoPb(cli client, pb *triepb.ExtendPb) *extensionNode {
+func newExtensionNodeFromProtoPb(cli client, hashVal []byte, pb *triepb.ExtendPb) *extensionNode {
 	e := &extensionNode{
 		cacheNode: cacheNode{
-			dirty: false,
+			hashVal: hashVal,
+			dirty:   false,
 		},
 		path:  pb.Path,
 		child: newHashNode(cli, pb.Value),
@@ -53,7 +56,6 @@ func newExtensionNodeFromProtoPb(cli client, pb *triepb.ExtendPb) *extensionNode
 }
 
 func (e *extensionNode) Delete(cli client, key keyType, offset uint8) (node, error) {
-	trieMtc.WithLabelValues("extensionNode", "delete").Inc()
 	matched := e.commonPrefixLength(key[offset:])
 	if matched != uint8(len(e.path)) {
 		return nil, trie.ErrNotExist
@@ -84,7 +86,6 @@ func (e *extensionNode) Delete(cli client, key keyType, offset uint8) (node, err
 }
 
 func (e *extensionNode) Upsert(cli client, key keyType, offset uint8, value []byte) (node, error) {
-	trieMtc.WithLabelValues("extensionNode", "upsert").Inc()
 	matched := e.commonPrefixLength(key[offset:])
 	if matched == uint8(len(e.path)) {
 		newChild, err := e.child.Upsert(cli, key, offset+matched, value)
@@ -119,7 +120,6 @@ func (e *extensionNode) Upsert(cli client, key keyType, offset uint8, value []by
 }
 
 func (e *extensionNode) Search(cli client, key keyType, offset uint8) (node, error) {
-	trieMtc.WithLabelValues("extensionNode", "search").Inc()
 	matched := e.commonPrefixLength(key[offset:])
 	if matched != uint8(len(e.path)) {
 		return nil, trie.ErrNotExist
@@ -129,11 +129,9 @@ func (e *extensionNode) Search(cli client, key keyType, offset uint8) (node, err
 }
 
 func (e *extensionNode) proto(cli client, flush bool) (proto.Message, error) {
-	trieMtc.WithLabelValues("extensionNode", "proto").Inc()
 	if flush {
 		if sn, ok := e.child.(serializable); ok {
-			_, err := sn.store(cli)
-			if err != nil {
+			if err := sn.store(cli); err != nil {
 				return nil, err
 			}
 		}
@@ -153,7 +151,6 @@ func (e *extensionNode) proto(cli client, flush bool) (proto.Message, error) {
 }
 
 func (e *extensionNode) Child() node {
-	trieMtc.WithLabelValues("extensionNode", "child").Inc()
 	return e.child
 }
 
@@ -168,8 +165,8 @@ func (e *extensionNode) Flush(cli client) error {
 	if err := e.child.Flush(cli); err != nil {
 		return err
 	}
-	_, err := e.store(cli)
-	return err
+
+	return e.store(cli)
 }
 
 func (e *extensionNode) updatePath(cli client, path []byte, hashnode bool) (node, error) {

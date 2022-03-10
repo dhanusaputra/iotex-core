@@ -38,7 +38,7 @@ type (
 		hash(client, bool) ([]byte, error)
 		proto(client, bool) (proto.Message, error)
 		delete(client) error
-		store(client) (node, error)
+		store(client) error
 	}
 
 	leaf interface {

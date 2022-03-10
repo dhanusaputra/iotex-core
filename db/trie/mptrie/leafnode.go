@@ -35,15 +35,18 @@ func newLeafNode(
 	}
 	l.cacheNode.serializable = l
 	if !cli.asyncMode() {
-		return l.store(cli)
+		if err := l.store(cli); err != nil {
+			return nil, err
+		}
 	}
 	return l, nil
 }
 
-func newLeafNodeFromProtoPb(mpt *merklePatriciaTrie, pb *triepb.LeafPb) *leafNode {
+func newLeafNodeFromProtoPb(mpt *merklePatriciaTrie, hashVal []byte, pb *triepb.LeafPb) *leafNode {
 	l := &leafNode{
 		cacheNode: cacheNode{
-			dirty: false,
+			hashVal: hashVal,
+			dirty:   false,
 		},
 		key:   pb.Path,
 		value: pb.Value,
@@ -68,7 +71,6 @@ func (l *leafNode) Delete(cli client, key keyType, offset uint8) (node, error) {
 }
 
 func (l *leafNode) Upsert(cli client, key keyType, offset uint8, value []byte) (node, error) {
-	trieMtc.WithLabelValues("leafNode", "upsert").Inc()
 	matched := commonPrefixLength(l.key[offset:], key[offset:])
 	if offset+matched == uint8(len(key)) {
 		if err := l.delete(cli); err != nil {
@@ -83,8 +85,7 @@ func (l *leafNode) Upsert(cli client, key keyType, offset uint8, value []byte) (
 	}
 	oldLeaf := l
 	if !cli.asyncMode() {
-		_, err = l.store(cli)
-		if err != nil {
+		if err := l.store(cli); err != nil {
 			return nil, err
 		}
 	}
@@ -106,7 +107,6 @@ func (l *leafNode) Upsert(cli client, key keyType, offset uint8, value []byte) (
 }
 
 func (l *leafNode) Search(_ client, key keyType, offset uint8) (node, error) {
-	trieMtc.WithLabelValues("leafNode", "search").Inc()
 	if !bytes.Equal(l.key[offset:], key[offset:]) {
 		return nil, trie.ErrNotExist
 	}
@@ -115,7 +115,6 @@ func (l *leafNode) Search(_ client, key keyType, offset uint8) (node, error) {
 }
 
 func (l *leafNode) proto(_ client, _ bool) (proto.Message, error) {
-	trieMtc.WithLabelValues("leafNode", "proto").Inc()
 	return &triepb.NodePb{
 		Node: &triepb.NodePb_Leaf{
 			Leaf: &triepb.LeafPb{
@@ -127,9 +126,5 @@ func (l *leafNode) proto(_ client, _ bool) (proto.Message, error) {
 }
 
 func (l *leafNode) Flush(cli client) error {
-	if !l.dirty {
-		return nil
-	}
-	_, err := l.store(cli)
-	return err
+	return l.store(cli)
 }

@@ -178,7 +178,7 @@ func (ws *workingSet) runAction(
 			break
 		}
 	}
-	ws.ResetSnapshots()
+	// ws.ResetSnapshots()
 
 	// TODO (zhi): return error if both receipt and err are nil
 	return receipt, err

@@ -270,9 +270,9 @@ func (sf *factory) newWorkingSet(ctx context.Context, height uint64) (*workingSe
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Start(ctx); err != nil {
-		return nil, err
-	}
+	// if err := store.Start(ctx); err != nil {
+	//	return nil, err
+	// }
 
 	return newWorkingSet(height, store), nil
 }
